@@ -1,11 +1,11 @@
 # Websocket_chat
 
-##App Functionality:
+## App Functionality:
 
--Websocket implementation
--Username
--Chatrooms
--Real time chat 
+- Websocket implementation
+- Username
+- Chatrooms
+- Real time chat 
 
 ![img](/tests0.png)
 ![img](/tests1.png)
