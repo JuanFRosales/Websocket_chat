@@ -10,4 +10,6 @@
 ![img](/tests0.png)
 ![img](/tests1.png)
 ![img](/tests2.png)
+
+## Terminal view
 ![img](/tests3.png)
