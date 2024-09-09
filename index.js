@@ -1,84 +1,63 @@
-import express from 'express';
-import { createServer } from 'node:http';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
-import { Server } from 'socket.io';
-import sqlite3 from 'sqlite3';
-import { open } from 'sqlite';
-import { availableParallelism } from 'node:os';
-import cluster from 'node:cluster';
-import { createAdapter, setupPrimary } from '@socket.io/cluster-adapter';
+const express = require("express");
+const app = express();
+const http = require("http");
+const server = http.createServer(app);
+const { Server } = require("socket.io");
+const io = new Server(server);
+const path = require("path");
 
-if (cluster.isPrimary) {
-  const numCPUs = availableParallelism();
-  for (let i = 0; i < numCPUs; i++) {
-    cluster.fork({
-      PORT: 3000 + i
-    });
-  }
+app.use(express.static(path.join(__dirname, "public"))); // Serve static files from the 'public' folder
 
-  setupPrimary();
-} else {
-  const db = await open({
-    filename: 'chat.db',
-    driver: sqlite3.Database
+const users = {}; // Object to keep track of usernames by id
+const msg = {
+  main: [],
+  designs: [],
+  lessons: [],
+};
+
+io.on("connection", (socket) => {
+  console.log(`User connected: ${socket.id}`);
+
+  // Handle setting the username
+  socket.on("set username", (username) => {
+    users[socket.id] = username;
+    console.log(`User with id ${socket.id} set username to ${username}`);
   });
 
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      client_offset TEXT UNIQUE,
-      content TEXT
-    );
-  `);
+  // Handle chat messages
+  socket.on("send message", ({ content, to, sender, chatName, isChannel }) => {
+    const payload = {
+      content,
+      chatName,
+      sender,
+    };
 
-  const app = express();
-  const server = createServer(app);
-  const io = new Server(server, {
-    connectionStateRecovery: {},
-    adapter: createAdapter()
-  });
-
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-
-  app.get('/', (req, res) => {
-    res.sendFile(join(__dirname, 'index.html'));
-  });
-
-  io.on('connection', async (socket) => {
-    socket.on('chat message', async (msg, clientOffset, callback) => {
-      let result;
-      try {
-        result = await db.run('INSERT INTO messages (content, client_offset) VALUES (?, ?)', msg, clientOffset);
-      } catch (e) {
-        if (e.errno === 19 /* SQLITE_CONSTRAINT */ ) {
-          callback();
-        } else {
-          // nothing to do, just let the client retry
-        }
-        return;
+    if (isChannel) {
+      socket.to(to).emit("new message", payload); // Send message to room
+      if (msg[chatName]) {
+        msg[chatName].push(payload); // Save the message in the channel's history
       }
-      io.emit('chat message', msg, result.lastID);
-      callback();
-    });
-
-    if (!socket.recovered) {
-      try {
-        await db.each('SELECT id, content FROM messages WHERE id > ?',
-          [socket.handshake.auth.serverOffset || 0],
-          (_err, row) => {
-            socket.emit('chat message', row.content, row.id);
-          }
-        )
-      } catch (e) {
-        // something went wrong
-      }
+    } else {
+      // Handle direct messages here if needed
+      socket.to(to).emit("new message", payload);
     }
   });
 
-  const port = process.env.PORT;
-
-  server.listen(port, () => {
-    console.log(`server running at http://localhost:${port}`);
+  // Handle user joining a room
+  socket.on("join room", (roomName, cb) => {
+    socket.join(roomName);
+    cb(msg[roomName] || []); // Send existing messages of the room to the client
+    console.log(`${users[socket.id]} joined room: ${roomName}`);
   });
-}
+
+  // Handle user disconnection
+  socket.on("disconnect", () => {
+    delete users[socket.id];
+    console.log(`User disconnected: ${socket.id}`);
+  });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`Listening on port ${PORT}`);
+});
